@@ -1,0 +1,44 @@
+version: '3.8'
+
+# Supporting services for Voice Bot
+# The Spring Boot app runs on the host; these provide LLM and TTS backends.
+
+services:
+
+  # ==========================================================================
+  # Ollama - Open-source LLM server
+  # ==========================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: voicebot-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    # Uncomment for GPU support (NVIDIA):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ==========================================================================
+  # openedai-speech - Piper TTS (OpenAI-compatible API)
+  # ==========================================================================
+  openedai-speech:
+    image: ghcr.io/matatonic/openedai-speech
+    container_name: voicebot-tts
+    ports:
+      - "8000:8000"
+    volumes:
+      - tts-voices:/app/voices
+      - tts-config:/app/config
+    environment:
+      - TTS_HOME=/app/voices
+
+volumes:
+  ollama-data:
+  tts-voices:
+  tts-config:

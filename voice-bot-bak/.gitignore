@@ -1,0 +1,31 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IDE ###
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+*.swp
+*.swo
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Vosk model (downloaded separately) ###
+vosk-model/*.bin
+vosk-model/*.fst
+vosk-model/*.conf
+vosk-model/ivector/
+
+### Maven wrapper ###
+.mvn/
+mvnw
+mvnw.cmd

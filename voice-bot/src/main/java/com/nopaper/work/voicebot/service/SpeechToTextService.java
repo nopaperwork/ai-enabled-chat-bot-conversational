@@ -5,117 +5,88 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nopaper.work.voicebot.model.TranscriptionResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
-import org.vosk.Model;
-import org.vosk.Recognizer;
+import org.springframework.web.client.RestClient;
 
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioInputStream;
-import javax.sound.sampled.AudioSystem;
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 
 /**
- * Speech-to-Text service using Vosk (open-source, offline).
- * Accepts WAV audio and returns transcribed text.
+ * Speech-to-Text service using faster-whisper-server (open-source, OpenAI-compatible).
+ * Calls the /v1/audio/transcriptions endpoint exposed by faster-whisper-server (Docker).
  */
 @Service
 public class SpeechToTextService {
 
     private static final Logger log = LoggerFactory.getLogger(SpeechToTextService.class);
-    private static final float SAMPLE_RATE = 16000.0f;
 
-    private final Model voskModel;
-    private final ObjectMapper objectMapper;
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public SpeechToTextService(Model voskModel, ObjectMapper objectMapper) {
-        this.voskModel = voskModel;
-        this.objectMapper = objectMapper;
+    @Value("${voicebot.stt.base-url}")
+    private String baseUrl;
+
+    @Value("${voicebot.stt.model}")
+    private String model;
+
+    @Value("${voicebot.stt.language}")
+    private String language;
+
+    public SpeechToTextService(RestClient ttsRestClient) {
+        this.restClient = ttsRestClient;
     }
 
     /**
-     * Transcribe audio bytes (WAV format) to text.
+     * Transcribe audio bytes (WAV format) to text via faster-whisper-server.
      */
     public TranscriptionResult transcribe(byte[] audioData) throws IOException {
-        byte[] pcmData = convertToPcm16kMono(audioData);
+        log.info("Sending {} bytes of audio to STT service", audioData.length);
 
-        try (Recognizer recognizer = new Recognizer(voskModel, SAMPLE_RATE)) {
-            int chunkSize = 4096;
-            for (int i = 0; i < pcmData.length; i += chunkSize) {
-                int len = Math.min(chunkSize, pcmData.length - i);
-                byte[] chunk = new byte[len];
-                System.arraycopy(pcmData, i, chunk, 0, len);
-                recognizer.acceptWaveForm(chunk, len);
-            }
+        // Build multipart request matching OpenAI /v1/audio/transcriptions API
+        String responseJson = restClient.post()
+                .uri(baseUrl + "/v1/audio/transcriptions")
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .body(buildMultipartBody(audioData))
+                .retrieve()
+                .body(String.class);
 
-            String resultJson = recognizer.getFinalResult();
-            log.debug("Vosk result: {}", resultJson);
-
-            JsonNode node = objectMapper.readTree(resultJson);
-            String text = node.path("text").asText("").trim();
-
-            if (text.isEmpty()) {
-                log.warn("No speech detected in audio");
-                return TranscriptionResult.of("");
-            }
-
-            log.info("Transcribed: {}", text);
-            return TranscriptionResult.of(text);
+        if (responseJson == null || responseJson.isBlank()) {
+            log.warn("STT service returned empty response");
+            return TranscriptionResult.of("");
         }
+
+        JsonNode node = objectMapper.readTree(responseJson);
+        String text = node.path("text").asText("").trim();
+
+        if (text.isEmpty()) {
+            log.warn("No speech detected in audio");
+            return TranscriptionResult.of("");
+        }
+
+        log.info("Transcribed: {}", text);
+        return TranscriptionResult.of(text);
     }
 
     /**
-     * Transcribe raw PCM audio bytes (16kHz, 16-bit, mono) to text.
-     * Used for WebSocket streaming where audio is already in the correct format.
+     * Build a multipart form body for the OpenAI-compatible transcription API.
      */
-    public TranscriptionResult transcribeRawPcm(byte[] pcmData) throws IOException {
-        try (Recognizer recognizer = new Recognizer(voskModel, SAMPLE_RATE)) {
-            int chunkSize = 4096;
-            for (int i = 0; i < pcmData.length; i += chunkSize) {
-                int len = Math.min(chunkSize, pcmData.length - i);
-                byte[] chunk = new byte[len];
-                System.arraycopy(pcmData, i, chunk, 0, len);
-                recognizer.acceptWaveForm(chunk, len);
+    private org.springframework.util.MultiValueMap<String, org.springframework.http.HttpEntity<?>> buildMultipartBody(byte[] audioData) {
+        MultipartBodyBuilder builder = new MultipartBodyBuilder();
+
+        builder.part("file", new ByteArrayResource(audioData) {
+            @Override
+            public String getFilename() {
+                return "audio.wav";
             }
+        }).header("Content-Type", "audio/wav");
 
-            String resultJson = recognizer.getFinalResult();
-            JsonNode node = objectMapper.readTree(resultJson);
-            String text = node.path("text").asText("").trim();
+        builder.part("model", model);
+        builder.part("language", language);
+        builder.part("response_format", "json");
 
-            return TranscriptionResult.of(text);
-        }
-    }
-
-    /**
-     * Convert WAV audio to 16kHz, 16-bit, mono PCM suitable for Vosk.
-     */
-    private byte[] convertToPcm16kMono(byte[] audioData) throws IOException {
-        try {
-            ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
-            AudioInputStream originalStream = AudioSystem.getAudioInputStream(bais);
-            AudioFormat originalFormat = originalStream.getFormat();
-
-            // Target format: 16kHz, 16-bit, mono, signed, little-endian
-            AudioFormat targetFormat = new AudioFormat(
-                    AudioFormat.Encoding.PCM_SIGNED,
-                    SAMPLE_RATE,
-                    16,
-                    1,
-                    2,
-                    SAMPLE_RATE,
-                    false
-            );
-
-            AudioInputStream convertedStream;
-            if (originalFormat.matches(targetFormat)) {
-                convertedStream = originalStream;
-            } else {
-                convertedStream = AudioSystem.getAudioInputStream(targetFormat, originalStream);
-            }
-
-            return convertedStream.readAllBytes();
-        } catch (javax.sound.sampled.UnsupportedAudioFileException e) {
-            throw new IOException("Unsupported audio format. Please provide WAV audio.", e);
-        }
+        return builder.build();
     }
 }

@@ -1,7 +1,7 @@
 version: '3.8'
 
 # Supporting services for Voice Bot
-# The Spring Boot app runs on the host; these provide LLM, STT, and TTS backends.
+# The Spring Boot app runs on the host; these provide LLM and TTS backends.
 
 services:
 
@@ -25,20 +25,6 @@ services:
     #           capabilities: [gpu]
 
   # ==========================================================================
-  # faster-whisper-server - Speech-to-Text (OpenAI-compatible Whisper API)
-  # ==========================================================================
-  faster-whisper:
-    image: fedirz/faster-whisper-server:latest-cpu
-    container_name: voicebot-stt
-    ports:
-      - "8001:8000"
-    environment:
-      - WHISPER__MODEL=Systran/faster-whisper-small
-      - WHISPER__INFERENCE_DEVICE=cpu
-    volumes:
-      - whisper-models:/root/.cache/huggingface
-
-  # ==========================================================================
   # openedai-speech - Piper TTS (OpenAI-compatible API)
   # ==========================================================================
   openedai-speech:
@@ -54,6 +40,5 @@ services:
 
 volumes:
   ollama-data:
-  whisper-models:
   tts-voices:
   tts-config:

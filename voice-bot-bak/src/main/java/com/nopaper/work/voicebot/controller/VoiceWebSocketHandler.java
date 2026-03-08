@@ -36,13 +36,14 @@ public class VoiceWebSocketHandler extends BinaryWebSocketHandler {
     private static final Logger log = LoggerFactory.getLogger(VoiceWebSocketHandler.class);
 
     private final VoicePipelineService pipelineService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     // Buffer audio chunks per session
     private final Map<String, ByteArrayOutputStream> audioBuffers = new ConcurrentHashMap<>();
 
-    public VoiceWebSocketHandler(VoicePipelineService pipelineService) {
+    public VoiceWebSocketHandler(VoicePipelineService pipelineService, ObjectMapper objectMapper) {
         this.pipelineService = pipelineService;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -52,27 +53,22 @@ public class VoiceWebSocketHandler extends BinaryWebSocketHandler {
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        try {
-            var payload = objectMapper.readTree(message.getPayload());
-            String type = payload.path("type").asText("");
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+        var payload = objectMapper.readTree(message.getPayload());
+        String type = payload.path("type").asText("");
 
-            switch (type) {
-                case "start_recording" -> {
-                    audioBuffers.put(session.getId(), new ByteArrayOutputStream());
-                    sendMessage(session, VoiceWebSocketMessage.status("Recording started"));
-                    log.debug("Recording started for session: {}", session.getId());
-                }
-                case "stop_recording" -> {
-                    processAudioBuffer(session);
-                }
-                default -> {
-                    sendMessage(session, VoiceWebSocketMessage.error("Unknown message type: " + type));
-                }
+        switch (type) {
+            case "start_recording" -> {
+                audioBuffers.put(session.getId(), new ByteArrayOutputStream());
+                sendMessage(session, VoiceWebSocketMessage.status("Recording started"));
+                log.debug("Recording started for session: {}", session.getId());
             }
-        } catch (IOException e) {
-            log.error("Failed to parse WebSocket text message for session {}", session.getId(), e);
-            sendMessage(session, VoiceWebSocketMessage.error("Invalid message format"));
+            case "stop_recording" -> {
+                processAudioBuffer(session);
+            }
+            default -> {
+                sendMessage(session, VoiceWebSocketMessage.error("Unknown message type: " + type));
+            }
         }
     }
 
